@@ -74,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
     uploadBtn.disabled = false;
   }
 
-  // 要約実行ボタン押下処理 (ReadableStream 読み取り対応)
+  // 要約実行ボタン押下処理 (堅牢なSSEストリーム読み取り)
   uploadBtn.addEventListener('click', async () => {
     if (!selectedFile) return;
 
@@ -85,7 +85,7 @@ document.addEventListener('DOMContentLoaded', () => {
     statusText.style.color = '';
     progressContainer.style.display = 'block';
     progressBar.value = 0;
-    statusText.innerText = 'サーバーへ送信中...';
+    statusText.innerText = 'サーバーへリクエスト送信中...';
 
     const formData = new FormData();
     formData.append('pdf', selectedFile);
@@ -97,10 +97,9 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error(`HTTPエラー Status: ${response.status}`);
       }
 
-      // ReadableStream を使用してSSEイベントをリアルタイム解析
       const reader = response.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
@@ -109,49 +108,58 @@ document.addEventListener('DOMContentLoaded', () => {
         const { done, value } = await reader.read();
         if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop(); // 未完結の行をバッファに残す
+        // 1. 新しいチャンクを読み込んでバッファに追加
+        const rawChunk = decoder.decode(value, { stream: true });
+        buffer += rawChunk;
 
-// 修正前:
-        // for (const line of lines) {
-        //   if (line.startsWith('data: ')) {
-        //     const data = JSON.parse(line.replace('data: ', ''));
-        //     ...
-        //   }
-        // }
+        // 2. SSEのイベント区切り (\n\n) で分割
+        const parts = buffer.split('\n\n');
 
-        // 修正後（安全なパース処理）:
-        for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine || !trimmedLine.startsWith('data:')) continue;
+        // 3. 配列末尾の不完全な文字列は次回のデコードのためにバッファへ戻す
+        buffer = parts.pop() || '';
 
-          // 'data:' 以降の純粋なJSON文字列を取り出す
-          const jsonString = trimmedLine.replace(/^data:\s*/, '');
+        // 4. 完成しているブロックを順次解析
+        for (const part of parts) {
+          const trimmedPart = part.trim();
+          if (!trimmedPart) continue;
 
-          try {
-            const data = JSON.parse(jsonString);
+          // ブロック内を行ごとに分解
+          const lines = trimmedPart.split('\n');
 
-            // 進捗状況の更新
-            if (data.percent >= 0) {
-              progressBar.value = data.percent;
-              statusText.innerText = `[${data.percent}%] ${data.message}`;
-            } else {
-              // サーバー側からのエラーハンドリング
-              statusText.innerText = `エラー: ${data.message}`;
-              statusText.style.color = 'red';
+          for (const line of lines) {
+            const trimmedLine = line.trim();
+            if (!trimmedLine || !trimmedLine.startsWith('data:')) continue;
+
+            // 'data:' を除去して純粋なJSON文字列を取得
+            const jsonString = trimmedLine.replace(/^data:\s*/, '');
+
+            try {
+              const data = JSON.parse(jsonString);
+
+              // 進捗ステータスの更新
+              if (data.percent >= 0) {
+                progressBar.value = data.percent;
+                statusText.innerText = `[${data.percent}%] ${data.message}`;
+              } else {
+                // サーバーエラーハンドリング
+                statusText.innerText = `エラー: ${data.message}`;
+                statusText.style.color = 'red';
+              }
+
+              // 最終結果の表示
+              if (data.summary) {
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = `
+                  <h3>要約結果 (全 ${data.totalPages} ページ)</h3>
+                  <div style="white-space: pre-wrap;">${data.summary}</div>
+                `;
+              }
+            } catch (e) {
+              // 不整合データのデバッグログ出力
+              console.error('❌ [SSE Error] JSONパースに失敗しました');
+              console.error('失敗した文字列:', jsonString);
+              console.error('エラー詳細:', e);
             }
-
-            // 最終サマリー結果の受領・表示
-            if (data.summary) {
-              resultDiv.style.display = 'block';
-              resultDiv.innerHTML = `
-                <h3>要約結果 (全 ${data.totalPages} ページ)</h3>
-                <div style="white-space: pre-wrap;">${data.summary}</div>
-              `;
-            }
-          } catch (e) {
-            console.warn('JSONパーススキップ（不完全なデータ）:', jsonString, e);
           }
         }
       }

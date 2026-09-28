@@ -39,11 +39,6 @@ async function processImagePdfAndSummarize(pdfBuffer, onProgress = () => {}) {
     console.log(`Page ${pageIndex} をOCR解析中...`);
     const ret = await worker.recognize(image);
 
-    // ページごとの抽出結果をコンソールに出力
-    console.log(`--- [OCR 抽出結果: Page ${pageIndex}] ---`);
-    console.log(ret.data.text);
-    console.log('-----------------------------------');
-
     fullExtractedText += `\n--- Page ${pageIndex} ---\n` + ret.data.text;
     pageIndex++;
   }
@@ -53,11 +48,6 @@ async function processImagePdfAndSummarize(pdfBuffer, onProgress = () => {}) {
   if (!fullExtractedText.trim()) {
     throw new Error('画像PDFからテキストを検出できませんでした。');
   }
-
-  // 結合された全体テキストをコンソールに出力
-  console.log('=== [OCR 抽出完了: 全体テキスト] ===');
-  console.log(fullExtractedText);
-  console.log('====================================');
 
   // 4. テキストを約4,000文字単位で分割
   const chunks = chunkText(fullExtractedText, 4000);
@@ -76,11 +66,11 @@ async function processImagePdfAndSummarize(pdfBuffer, onProgress = () => {}) {
         messages: [
           {
             role: 'system',
-            content: 'あなたは医療アシスタントです。提出された文章の重要情報を漏らさず簡潔に整理してください。'
+            content: 'あなたは医療アシスタントです。提出された文章の重要情報を漏らさず完璧に抽出してください。'
           },
           {
             role: 'user',
-            content: `以下はOCR抽出した長文ドキュメントのパート${i + 1}です。要点を抽出してください：\n\n${chunks[i]}`
+            content: `以下はOCR抽出した長文ドキュメントのパート${i + 1}です。作成してください：\n\n${chunks[i]}`
           }
         ],
         options: { num_ctx: 8192 },

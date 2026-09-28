@@ -23,6 +23,10 @@ router.post('/summarize-pdf', upload.single('pdf'), async (req, res) => {
 
 // クライアントに進捗イベントを送信するヘルパー関数
   const sendEvent = (percent, message, result = null) => {
+
+	  // ★ メッセージ内の改行コードを除去してSSE構文崩れを防ぐ
+    const safeMessage = typeof message === 'string' ? message.replace(/[\r\n]+/g, ' ') : message;
+
     res.write(`data: ${JSON.stringify({ percent, message, filename: req.file.originalname, ...result })}\n\n`);
   };
 
